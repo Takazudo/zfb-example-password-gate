@@ -36,9 +36,15 @@ Custom Token**, with these permissions:
 | --- | --- | --- |
 | Account | Workers Scripts | Edit |
 | Account | Account Settings | Read |
+| Zone | Workers Routes | Edit |
 
-Set **Account Resources → Include → (your account)**. **No Zone permissions are
-needed** — this repo deploys to a `*.workers.dev` host, not a custom domain.
+Set **Account Resources → Include → (your account)** and **Zone Resources →
+Include → `takazudomodular.com`**.
+
+**The Zone permission is not optional here.** `wrangler.toml` attaches the
+custom domain `zfb-example-password-gate.takazudomodular.com` with a
+`custom_domain` route, and creating that route is a zone-level operation. A
+token without it uploads the Worker fine and then fails on the route step.
 
 Copy the token value when it is shown. Cloudflare will not display it again.
 
@@ -122,9 +128,14 @@ pnpm build
 pnpm exec wrangler deploy
 ```
 
-After the first successful deploy the site is at:
+After the first successful deploy the site is at its custom domain:
 
-<https://zfb-example-password-gate.takazudo.workers.dev>
+<https://zfb-example-password-gate.takazudomodular.com>
+
+Cloudflare creates that hostname's DNS record and TLS certificate automatically
+from the `custom_domain` route; allow a few minutes after the first deploy for
+the certificate to be issued. `workers_dev = true` is also set, so the Worker
+stays reachable at <https://zfb-example-password-gate.takazudo.workers.dev> too.
 
 ## 5. Verify
 
@@ -134,12 +145,27 @@ Confirm the deploy job actually ran rather than self-skipping:
 gh run list --repo Takazudo/zfb-example-password-gate --workflow Deploy --limit 1
 ```
 
-A skipped deploy logs a `::notice::` line naming the missing piece. Then check
-the live gate — an unauthenticated request must return **401** with the inline
-login page, not your site:
+A skipped deploy logs a `::notice::` line naming the missing piece.
+
+The deploy job then runs the automated smoke test (`pnpm smoke`) against the
+custom domain. Run it yourself the same way:
 
 ```sh
-curl -i https://zfb-example-password-gate.takazudo.workers.dev/
+pnpm build   # the static-asset check reads a real asset path out of dist/
+pnpm smoke
+```
+
+It asserts that both `/` **and a real static asset** come back as the 401 login
+page — the second one is what catches a `run_worker_first` regression, where the
+asset layer serves files before the Worker and the gate is bypassed for every
+static path while `/` still looks protected. Against a host that does not
+resolve yet it exits 0 with a `::notice::` instead of failing.
+
+To check by hand — an unauthenticated request must return **401** with the
+inline login page, not your site:
+
+```sh
+curl -i https://zfb-example-password-gate.takazudomodular.com/
 ```
 
 Look for `HTTP/2 401`, `Cache-Control: no-store`, and `X-Robots-Tag: noindex`.
@@ -149,7 +175,7 @@ If you get a 200 with page content, the gate is not running ahead of the assets
 Then confirm your password is accepted and the marker cookie comes back:
 
 ```sh
-curl -i -X POST https://zfb-example-password-gate.takazudo.workers.dev/__auth \
+curl -i -X POST https://zfb-example-password-gate.takazudomodular.com/__auth \
   -H "content-type: application/x-www-form-urlencoded" \
   --data-urlencode "password=<your SITE_PASSWORD>" \
   --data-urlencode "next=/updates/"
@@ -183,6 +209,15 @@ one year.
 **`wrangler deploy` fails with an authentication or authorization error.** The
 token is missing **Workers Scripts — Edit**, or its Account Resources scope does
 not include the account in `CLOUDFLARE_ACCOUNT_ID`. Re-check both against step 1.
+
+**The Worker uploads, then the deploy fails on the route step.** The token is
+missing **Zone · Workers Routes — Edit**, or its Zone Resources scope does not
+include `takazudomodular.com`. This is the one failure mode where the Worker
+itself deploys successfully and only the custom-domain attach fails, so the
+`workers.dev` URL keeps working while the custom domain does not resolve. Add
+the Zone permission in step 1 and re-run the deploy. Do **not** "fix" it by
+deleting the `[[routes]]` block from `wrangler.toml` — that silently drops the
+custom domain.
 
 **A deploy succeeds but the URL 404s.** The `workers.dev` subdomain may not be
 enabled for the account. Enable it in the dashboard under Workers & Pages →
