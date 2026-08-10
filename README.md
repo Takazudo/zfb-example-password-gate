@@ -18,6 +18,10 @@ Cloudflare Worker gate. Use Wrangler for Worker checks after `pnpm build`.
 
 ## Cloudflare setup
 
+For the ordered from-zero walkthrough (API token, repo secrets, first deploy,
+verification), see [docs/cloudflare-setup.md](docs/cloudflare-setup.md). The
+notes below are the reference summary.
+
 Set the production password as a Worker secret:
 
 ```sh
@@ -105,7 +109,8 @@ This repo ships `.github/workflows/deploy.yml`:
 - **deploy** runs on push to `main` and calls `wrangler deploy`. It self-skips
   until the secrets below are set, so a fresh repo never shows a red deploy.
 
-Add these under **Settings → Secrets and variables → Actions**:
+Add these under **Settings → Secrets and variables → Actions** (step-by-step in
+[docs/cloudflare-setup.md](docs/cloudflare-setup.md)):
 
 | Secret | Value |
 | --- | --- |
