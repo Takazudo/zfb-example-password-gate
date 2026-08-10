@@ -1,9 +1,36 @@
 name = "zfb-example-password-gate"
+# The Worker source lives OUTSIDE the assets directory — this is a hand-written
+# gate, not an adapter bundle, so `main` is the TS entry, not `dist/_worker.js`.
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Top-level fields MUST stay above the [assets] table: in TOML any key after a
+# table header is scoped INTO that table, so `workers_dev` / `preview_urls`
+# placed below would become `assets.workers_dev` — wrangler warns "Unexpected
+# fields found in assets field" and silently ignores them.
+#
+# Both are set explicitly because `preview_urls` defaults to *match*
+# `workers_dev`; leaving it implicit means a later `workers_dev = false` would
+# silently take the per-deploy preview URLs down with it.
+workers_dev = true
+preview_urls = true
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"
+# MANDATORY — do not set to false. With the default `false` the asset layer
+# answers GET/HEAD before the Worker runs, so any path resolving to a static
+# file is served without ever reaching the password gate: a silent bypass that
+# still looks protected. `true` forces the Worker first; it serves assets itself
+# via env.ASSETS.fetch() once the request is authorized.
+# scripts/smoke.mjs asserts a real static asset path is gated, which is what
+# catches a regression of this line.
 run_worker_first = true
+
+# Custom-domain routing. `custom_domain = true` makes Cloudflare create and
+# manage the DNS record and TLS certificate for this hostname.
+# Requires the API token to carry Zone · Workers Routes · Edit.
+[[routes]]
+pattern = "zfb-example-password-gate.takazudomodular.com"
+custom_domain = true
