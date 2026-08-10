@@ -108,13 +108,20 @@ This repo ships `.github/workflows/deploy.yml`:
   `pnpm build`. It needs no Cloudflare credentials, so CI is green immediately.
 - **deploy** runs on push to `main` and calls `wrangler deploy`. It self-skips
   until the secrets below are set, so a fresh repo never shows a red deploy.
+- **smoke test** runs right after a successful deploy — `pnpm smoke`
+  (`scripts/smoke.mjs`). It self-skips the same way while the custom domain does
+  not resolve yet.
+
+Production runs on the custom domain declared in `wrangler.toml`:
+
+<https://zfb-example-password-gate.takazudomodular.com>
 
 Add these under **Settings → Secrets and variables → Actions** (step-by-step in
 [docs/cloudflare-setup.md](docs/cloudflare-setup.md)):
 
 | Secret | Value |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | API token with Account · Workers Scripts: Edit |
+| `CLOUDFLARE_API_TOKEN` | API token with Account · Workers Scripts: Edit and Zone · Workers Routes: Edit |
 | `CLOUDFLARE_ACCOUNT_ID` | target Cloudflare account id |
 
 `SITE_PASSWORD` is a Worker secret set with `wrangler secret put` (it has a local dev fallback), not a GitHub secret.
@@ -127,8 +134,39 @@ these permissions:
 
 - **Workers Scripts** — Edit
 - **Account Settings** — Read
+- **Workers Routes** — Edit (Zone-scoped)
 
-Set **Account Resources → Include → (your account)**. No Zone permissions are
-needed — this repo deploys to a `*.workers.dev` host, not a custom domain. A
-single token can be shared across all `zfb-example-*` repos if it carries the
-union of every repo's permissions.
+Set **Account Resources → Include → (your account)**, and **Zone Resources →
+Include → `takazudomodular.com`**.
+
+The Zone permission is required: `wrangler.toml` attaches the custom domain
+`zfb-example-password-gate.takazudomodular.com` via a `custom_domain` route, and
+creating that route is a zone-level operation. Without it `wrangler deploy`
+uploads the Worker and then fails on the route step. A single token can be
+shared across all `zfb-example-*` repos if it carries the union of every repo's
+permissions.
+
+### Post-deploy smoke test
+
+`scripts/smoke.mjs` (`pnpm smoke`) checks the **live** site. Its assertions are
+deliberately inverted compared to the other `zfb-example-*` sites: a healthy
+deploy of this repo answers an unauthenticated request with the **401 login
+page**, never with site content. It asserts:
+
+1. `GET /` is gated — 401 plus the login page, not the site.
+2. **A real static asset is gated too.** The path is read from `dist/` at
+   runtime, so it is a file that genuinely exists in the deploy. This is the
+   check that catches a `run_worker_first` regression — with `false`, the asset
+   layer serves files before the Worker and the gate is silently bypassed while
+   `GET /` still looks correctly protected.
+3. `POST /__auth` with a wrong password is rejected and issues no marker cookie.
+   The wrong password is generated at runtime — no password is committed.
+4. TLS is valid for the host (Node verifies certificates by default, and the
+   script refuses to run with verification disabled).
+
+Run it against a local `wrangler dev` with `SMOKE_URL=http://localhost:8787
+pnpm smoke`. When the host does not resolve at all it exits 0 with a
+`::notice::`, so CI stays green until the domain is attached. That self-skip is
+deliberately narrow — a DNS failure is the only signal that means "not attached
+yet". Once the name resolves, a refused, reset, or timed-out request is a real
+outage and fails the build rather than skipping.
