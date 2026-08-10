@@ -165,5 +165,8 @@ page**, never with site content. It asserts:
    script refuses to run with verification disabled).
 
 Run it against a local `wrangler dev` with `SMOKE_URL=http://localhost:8787
-pnpm smoke`. Against an unreachable host it exits 0 with a `::notice::` rather
-than failing, so CI stays green until the domain is attached.
+pnpm smoke`. When the host does not resolve at all it exits 0 with a
+`::notice::`, so CI stays green until the domain is attached. That self-skip is
+deliberately narrow — a DNS failure is the only signal that means "not attached
+yet". Once the name resolves, a refused, reset, or timed-out request is a real
+outage and fails the build rather than skipping.

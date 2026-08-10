@@ -29,19 +29,13 @@ const BACKOFF_MS = [3000, 6000, 10000, 15000, 20000];
 // propagating; retry them rather than reporting a broken gate.
 const TRANSIENT_STATUS = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530]);
 
-// The host is unreachable at the DNS/TCP layer — the domain is not wired up
-// yet. This is the self-skip path, not a failure.
-const NOT_WIRED_UP_CODES = new Set([
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ETIMEDOUT",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT",
-]);
+// A DNS failure is the ONLY evidence that the custom domain is not attached
+// yet, so it is the only self-skip path. Everything past DNS — refused, reset,
+// connect/header timeout — means the name resolved and something is answering
+// for it, i.e. the domain IS wired up. Skipping on those would let an outage or
+// a hung Worker exit 0 and pass the post-deploy check, which is the exact
+// rubber-stamp this script exists to prevent. They go red instead.
+const DNS_UNRESOLVED_CODES = new Set(["ENOTFOUND", "EAI_AGAIN"]);
 
 // TLS answered but the certificate is not valid for this host. That is
 // assertion (d) failing, not a "not ready yet" — never skip on these.
@@ -55,6 +49,7 @@ const TLS_INVALID_CODES = new Set([
 
 class NotWiredUpError extends Error {}
 class TlsInvalidError extends Error {}
+class UnreachableError extends Error {}
 
 const failures = [];
 
@@ -110,10 +105,13 @@ async function request(url, init = {}) {
   if (lastResponse) return lastResponse;
 
   const code = errorCode(lastTransportError);
-  if (NOT_WIRED_UP_CODES.has(code)) {
+  if (DNS_UNRESOLVED_CODES.has(code)) {
     throw new NotWiredUpError(`${code} for ${url}`);
   }
-  throw lastTransportError ?? new Error(`could not reach ${url}`);
+  throw new UnreachableError(
+    `${code ?? "connection failed"} for ${url} — the hostname resolves, so the domain is attached, ` +
+      "but it never returned a response",
+  );
 }
 
 async function collectDistFiles(dir, base = DIST_DIR) {
@@ -267,6 +265,8 @@ try {
     skip(`${SITE_URL} does not resolve yet (${error.message}). Attach the custom domain, then re-run.`);
   } else if (error instanceof TlsInvalidError) {
     fail("(d) TLS certificate is valid for the host", error.message);
+  } else if (error instanceof UnreachableError) {
+    fail("live site responds", error.message);
   } else {
     fail("smoke test crashed", error.message);
   }
