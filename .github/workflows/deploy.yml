@@ -7,12 +7,17 @@
 #              * secrets.CLOUDFLARE_API_TOKEN is unset, or
 #              * wrangler.toml still holds a REPLACE_WITH_* placeholder id.
 #            So the repo never shows a red deploy before Cloudflare is wired up.
+#            It then runs `pnpm smoke` against the custom domain, which likewise
+#            self-skips until that domain resolves.
 #
 # Enable deploys by adding, in repo Settings -> Secrets and variables -> Actions:
-#   CLOUDFLARE_API_TOKEN   token with Account · Workers Scripts: Edit
-#                          (+ Account Settings: Read). This example declares
-#                          only the ASSETS binding — no KV, AI, or D1 — so no
-#                          further permissions are needed.
+#   CLOUDFLARE_API_TOKEN   token with Account · Workers Scripts: Edit,
+#                          Account · Account Settings: Read, and
+#                          Zone · Workers Routes: Edit (required by the
+#                          custom_domain route in wrangler.toml — without it
+#                          `wrangler deploy` fails on the route step). This
+#                          example declares only the ASSETS binding — no KV, AI,
+#                          or D1 — so no further permissions are needed.
 #   CLOUDFLARE_ACCOUNT_ID  target Cloudflare account id
 name: Deploy
 
@@ -91,3 +96,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy
+      # Confirms the custom domain is attached AND the gate is running ahead of
+      # the asset layer. Self-skips (exit 0 + ::notice::) while the domain does
+      # not resolve, so the repo never shows a red deploy before Cloudflare is
+      # wired up. Needs dist/ from the Build step above to pick a real asset path.
+      - name: Smoke test — is the live gate actually gating?
+        if: steps.preflight.outputs.ready == 'true'
+        run: pnpm smoke
