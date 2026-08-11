@@ -8,16 +8,26 @@
 // expecting 200 would turn this script into a rubber stamp for a bypassed gate.
 //
 // Run after `pnpm build` (the static-asset check reads dist/ to learn a real
-// deployed asset path). Override the target with SMOKE_URL.
+// deployed asset path). Override the target with the first CLI argument or
+// SMOKE_URL. Set SMOKE_REQUIRE_LIVE=1 to turn every self-skip into a failure.
 
 import { randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 
+// Target precedence: first positional argument, then SMOKE_URL, then the
+// deployed custom domain. The argv form exists so the not-ready and TLS paths
+// below can be exercised by hand against known-bad hosts.
 const SITE_URL = (
-  process.env.SMOKE_URL ?? "https://zfb-example-password-gate.takazudomodular.com"
+  process.argv[2] ?? process.env.SMOKE_URL ?? "https://zfb-example-password-gate.takazudomodular.com"
 ).replace(/\/+$/, "");
 const DIST_DIR = path.resolve(import.meta.dirname, "..", "dist");
+
+// Once the custom domain is confirmed live, "not ready yet" stops being a
+// benign pre-setup state and becomes an outage. With SMOKE_REQUIRE_LIVE set,
+// every path that would otherwise self-skip fails instead. CI sets it; the skip
+// path stays in the code for a fresh clone that has not wired up Cloudflare.
+const REQUIRE_LIVE = /^(1|true)$/i.test(process.env.SMOKE_REQUIRE_LIVE ?? "");
 
 const LOGIN_PAGE_MARKERS = ["<title>Preview password</title>", 'action="/__auth"'];
 const MARKER_COOKIE = "zfb_preview_gate";
@@ -29,13 +39,20 @@ const BACKOFF_MS = [3000, 6000, 10000, 15000, 20000];
 // propagating; retry them rather than reporting a broken gate.
 const TRANSIENT_STATUS = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530]);
 
-// A DNS failure is the ONLY evidence that the custom domain is not attached
-// yet, so it is the only self-skip path. Everything past DNS — refused, reset,
-// connect/header timeout — means the name resolved and something is answering
-// for it, i.e. the domain IS wired up. Skipping on those would let an outage or
-// a hung Worker exit 0 and pass the post-deploy check, which is the exact
-// rubber-stamp this script exists to prevent. They go red instead.
+// The two — and only two — "not reachable yet" conditions, both of which mean
+// nothing can be asserted about the target. SMOKE_REQUIRE_LIVE turns them into
+// failures once the domain is known to be live.
+//
+// DNS has not published the name yet: the custom domain is not attached.
 const DNS_UNRESOLVED_CODES = new Set(["ENOTFOUND", "EAI_AGAIN"]);
+
+// The name resolved but nothing routes to the address it returned. Cloudflare
+// publishes the AAAA record BEFORE the A record when it attaches a custom
+// domain, and GitHub-hosted runners have no IPv6 route at all — so for a few
+// minutes after the first deploy the runner sees an AAAA it cannot dial and no
+// A yet. That is the same "not attached yet" state as a DNS failure on a site
+// that is in fact working.
+const NO_ROUTE_CODES = new Set(["ENETUNREACH", "EHOSTUNREACH"]);
 
 // TLS answered but the certificate is not valid for this host. That is
 // assertion (d) failing, not a "not ready yet" — never skip on these.
@@ -69,6 +86,13 @@ function check(label, condition, detail) {
 }
 
 function skip(reason) {
+  if (REQUIRE_LIVE) {
+    fail(
+      "live site responds",
+      `${reason} — SMOKE_REQUIRE_LIVE is set, so "not serving yet" is a failure, not a skip`,
+    );
+    return;
+  }
   console.log(`::notice::Smoke test skipped — ${reason}`);
   console.log(`Skipped: ${SITE_URL} is not serving yet. Nothing was asserted.`);
   process.exit(0);
@@ -76,8 +100,31 @@ function skip(reason) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function errorCode(error) {
-  return error?.cause?.code ?? error?.code ?? null;
+// Collect every error code in the thrown error's tree. undici hides transport
+// failures under `cause`, and Happy Eyeballs dials the A and AAAA addresses in
+// parallel and reports both failures as an AggregateError whose OWN `code` is
+// undefined — the real ENETUNREACH sits in `errors[]`. A cause-only lookup
+// misses it, which is how an IPv6-only propagation window turns into a red CI
+// run against a site that is serving perfectly well.
+function errorCodes(error) {
+  const codes = new Set();
+  const seen = new Set();
+
+  const visit = (node) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (typeof node.code === "string") codes.add(node.code);
+    if (Array.isArray(node.errors)) node.errors.forEach(visit);
+    visit(node.cause);
+  };
+
+  visit(error);
+  return codes;
+}
+
+function matchCode(codes, set) {
+  for (const code of codes) if (set.has(code)) return code;
+  return null;
 }
 
 async function request(url, init = {}) {
@@ -92,9 +139,11 @@ async function request(url, init = {}) {
       lastResponse = response;
       if (!TRANSIENT_STATUS.has(response.status)) return response;
     } catch (error) {
-      const code = errorCode(error);
-      if (TLS_INVALID_CODES.has(code)) {
-        throw new TlsInvalidError(`${code} for ${url}`);
+      // TLS outranks every not-ready code that may sit beside it in the tree:
+      // an invalid certificate is an assertion failing, never a skip.
+      const tlsCode = matchCode(errorCodes(error), TLS_INVALID_CODES);
+      if (tlsCode) {
+        throw new TlsInvalidError(`${tlsCode} for ${url}`);
       }
       lastTransportError = error;
     }
@@ -104,13 +153,30 @@ async function request(url, init = {}) {
   // return it and let the assertions report the unexpected status.
   if (lastResponse) return lastResponse;
 
-  const code = errorCode(lastTransportError);
-  if (DNS_UNRESOLVED_CODES.has(code)) {
-    throw new NotWiredUpError(`${code} for ${url}`);
+  const codes = errorCodes(lastTransportError);
+
+  const dnsCode = matchCode(codes, DNS_UNRESOLVED_CODES);
+  if (dnsCode) {
+    throw new NotWiredUpError(`${dnsCode} for ${url} — the hostname does not resolve yet`);
   }
+
+  const routeCode = matchCode(codes, NO_ROUTE_CODES);
+  if (routeCode) {
+    throw new NotWiredUpError(
+      `${routeCode} for ${url} — the hostname resolves but nothing routes to it, which is what a ` +
+        "runner without an IPv6 route sees while a freshly attached custom domain has published " +
+        "only its AAAA record",
+    );
+  }
+
+  // Everything else past DNS — refused, reset, connect/header timeout — means
+  // the name resolved AND routes, i.e. the domain is wired up and something is
+  // meant to be answering for it. Skipping here would let an outage or a hung
+  // Worker exit 0 and pass the post-deploy check, which is the exact rubber
+  // stamp this script exists to prevent. It goes red instead.
   throw new UnreachableError(
-    `${code ?? "connection failed"} for ${url} — the hostname resolves, so the domain is attached, ` +
-      "but it never returned a response",
+    `${[...codes].join(", ") || "connection failed"} for ${url} — the hostname resolves and routes, ` +
+      "so the domain is attached, but it never returned a response",
   );
 }
 
@@ -180,10 +246,15 @@ async function main() {
   // (d) TLS. Node verifies certificates by default, so every successful https
   // response below is itself the proof. That evidence is only worth anything
   // while verification is actually on — refuse to run with it disabled.
+  // The local-http carve-out is itself a skip of assertion (d), so
+  // SMOKE_REQUIRE_LIVE withdraws it: under require-live only real https counts.
+  const localAllowed = isLocalTarget(SITE_URL) && !REQUIRE_LIVE;
   check(
-    "(d) target is https (or a local dev host)",
-    SITE_URL.startsWith("https://") || isLocalTarget(SITE_URL),
-    `SMOKE_URL is neither https nor a local dev host: ${SITE_URL}`,
+    "(d) target is https (or, without SMOKE_REQUIRE_LIVE, a local dev host)",
+    SITE_URL.startsWith("https://") || localAllowed,
+    isLocalTarget(SITE_URL)
+      ? `SMOKE_REQUIRE_LIVE is set, so the local dev host ${SITE_URL} is not an acceptable target`
+      : `target is neither https nor a local dev host: ${SITE_URL}`,
   );
   check(
     "(d) TLS verification is enabled",
@@ -251,7 +322,7 @@ async function main() {
     `response set ${MARKER_COOKIE} for an incorrect password`,
   );
 
-  if (isLocalTarget(SITE_URL)) {
+  if (localAllowed) {
     console.log("SKIP  (d) TLS not applicable — target is a local http dev server");
   } else {
     pass("(d) TLS certificate is valid for the host (verified https responses received)");
@@ -262,7 +333,7 @@ try {
   await main();
 } catch (error) {
   if (error instanceof NotWiredUpError) {
-    skip(`${SITE_URL} does not resolve yet (${error.message}). Attach the custom domain, then re-run.`);
+    skip(`${SITE_URL} is not reachable yet (${error.message}). Attach the custom domain, then re-run.`);
   } else if (error instanceof TlsInvalidError) {
     fail("(d) TLS certificate is valid for the host", error.message);
   } else if (error instanceof UnreachableError) {

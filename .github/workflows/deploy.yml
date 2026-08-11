@@ -7,8 +7,9 @@
 #              * secrets.CLOUDFLARE_API_TOKEN is unset, or
 #              * wrangler.toml still holds a REPLACE_WITH_* placeholder id.
 #            So the repo never shows a red deploy before Cloudflare is wired up.
-#            It then runs `pnpm smoke` against the custom domain, which likewise
-#            self-skips until that domain resolves.
+#            It then runs `pnpm smoke` against the custom domain with
+#            SMOKE_REQUIRE_LIVE=1, so an unreachable site fails instead of
+#            self-skipping — the domain is attached and serving today.
 #
 # Enable deploys by adding, in repo Settings -> Secrets and variables -> Actions:
 #   CLOUDFLARE_API_TOKEN   token with Account · Workers Scripts: Edit,
@@ -97,9 +98,16 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy
       # Confirms the custom domain is attached AND the gate is running ahead of
-      # the asset layer. Self-skips (exit 0 + ::notice::) while the domain does
-      # not resolve, so the repo never shows a red deploy before Cloudflare is
-      # wired up. Needs dist/ from the Build step above to pick a real asset path.
+      # the asset layer. Needs dist/ from the Build step above to pick a real
+      # asset path.
+      #
+      # SMOKE_REQUIRE_LIVE=1 retires the script's self-skip: this domain is
+      # attached and serving, so "not reachable yet" is now an outage rather than
+      # a pending setup step and must go red instead of quietly exiting 0. The
+      # skip path stays in scripts/smoke.mjs for a fresh clone that has not wired
+      # up Cloudflare yet — drop this env block there and it self-skips again.
       - name: Smoke test — is the live gate actually gating?
         if: steps.preflight.outputs.ready == 'true'
+        env:
+          SMOKE_REQUIRE_LIVE: "1"
         run: pnpm smoke

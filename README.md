@@ -109,8 +109,9 @@ This repo ships `.github/workflows/deploy.yml`:
 - **deploy** runs on push to `main` and calls `wrangler deploy`. It self-skips
   until the secrets below are set, so a fresh repo never shows a red deploy.
 - **smoke test** runs right after a successful deploy — `pnpm smoke`
-  (`scripts/smoke.mjs`). It self-skips the same way while the custom domain does
-  not resolve yet.
+  (`scripts/smoke.mjs`), with `SMOKE_REQUIRE_LIVE=1`. The custom domain is
+  attached and serving, so the script's self-skip is switched off there: an
+  unreachable site fails the run instead of passing quietly.
 
 Production runs on the custom domain declared in `wrangler.toml`:
 
@@ -164,9 +165,20 @@ page**, never with site content. It asserts:
 4. TLS is valid for the host (Node verifies certificates by default, and the
    script refuses to run with verification disabled).
 
-Run it against a local `wrangler dev` with `SMOKE_URL=http://localhost:8787
-pnpm smoke`. When the host does not resolve at all it exits 0 with a
-`::notice::`, so CI stays green until the domain is attached. That self-skip is
-deliberately narrow — a DNS failure is the only signal that means "not attached
-yet". Once the name resolves, a refused, reset, or timed-out request is a real
-outage and fails the build rather than skipping.
+Point it somewhere else with a first argument (`pnpm smoke https://example.com`)
+or `SMOKE_URL`; against a local `wrangler dev` use
+`SMOKE_URL=http://localhost:8787 pnpm smoke`.
+
+**Self-skip.** When the host does not resolve, or resolves but nothing routes to
+it, the script exits 0 with a `::notice::` instead of failing, so a fresh clone
+stays green until the domain is attached. The second case covers the propagation
+window right after `wrangler deploy` attaches a custom domain: Cloudflare
+publishes the AAAA record before the A record, and GitHub runners have no IPv6
+route, so the runner briefly gets `ENETUNREACH` against a site that is in fact
+serving. The carve-out stays narrow — once the name resolves and routes, a
+refused, reset, or timed-out request is a real outage and fails the build. An
+invalid or expired certificate always fails; it is never treated as "not ready".
+
+**`SMOKE_REQUIRE_LIVE`.** Set it to `1` and every self-skip above becomes a hard
+failure. CI sets it on the smoke step, because this domain is known to be live —
+the skip path exists for repos that have not been wired up to Cloudflare yet.

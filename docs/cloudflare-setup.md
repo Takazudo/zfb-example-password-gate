@@ -159,7 +159,10 @@ It asserts that both `/` **and a real static asset** come back as the 401 login
 page — the second one is what catches a `run_worker_first` regression, where the
 asset layer serves files before the Worker and the gate is bypassed for every
 static path while `/` still looks protected. Against a host that does not
-resolve yet it exits 0 with a `::notice::` instead of failing.
+resolve yet — or that resolves but has no route, the state a runner sees during
+the AAAA-before-A propagation window — it exits 0 with a `::notice::` instead of
+failing. CI passes `SMOKE_REQUIRE_LIVE=1` to turn those skips into failures,
+since this domain is already attached and serving.
 
 To check by hand — an unauthenticated request must return **401** with the
 inline login page, not your site:
