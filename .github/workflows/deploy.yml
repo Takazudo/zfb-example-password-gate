@@ -1,8 +1,9 @@
 # Cloudflare Workers (static assets) deploy for this zfb example.
 #
-#   build  — always runs (push + PR): install, typecheck (`zfb check`), build
-#            (`zfb build`). This is the L3 build-output gate; it needs no
-#            Cloudflare credentials, so a fresh clone/fork is green immediately.
+#   build  — always runs (push + PR): install, typecheck (`zfb check`), test
+#            (`vitest run`), build (`zfb build`). This is the L3 build-output
+#            gate; it needs no Cloudflare credentials, so a fresh clone/fork is
+#            green immediately.
 #   deploy — push to `main` only: runs `wrangler deploy`, but SELF-SKIPS when
 #              * secrets.CLOUDFLARE_API_TOKEN is unset, or
 #              * wrangler.toml still holds a REPLACE_WITH_* placeholder id.
@@ -30,14 +31,18 @@ on:
 
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+  # Never interrupt an in-flight `wrangler deploy`: a push-triggered run must finish.
+  # PR builds are still superseded — they group separately (github.ref is refs/pull/N/merge).
+  # Note: with cancellation off GitHub queues at most one pending run per group, so a third
+  # rapid push displaces the queued second one; the running deploy is never touched.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build (typecheck + zfb build)
+    name: Build (typecheck + test + zfb build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -54,6 +59,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm typecheck
+      - name: Test
+        run: pnpm test
       - name: Build
         run: pnpm build
 
