@@ -10,3 +10,6 @@ worker/
 # zfb temp file stranded on abnormal termination — Takazudo/zudo-front-builder#821
 zfb-tailwind-entry-*.css
 .DS_Store
+
+# git worktrees created by the /x-wt-teams agent workflow — local only
+worktrees/
