@@ -105,7 +105,8 @@ Stop Wrangler when you are done.
 This repo ships `.github/workflows/deploy.yml`:
 
 - **build** runs on every push and PR — `pnpm install`, `pnpm typecheck`,
-  `pnpm build`. It needs no Cloudflare credentials, so CI is green immediately.
+  `pnpm test`, `pnpm build`. It needs no Cloudflare credentials, so CI is green
+  immediately.
 - **deploy** runs on push to `main` and calls `wrangler deploy`. It self-skips
   until the secrets below are set, so a fresh repo never shows a red deploy.
 - **smoke test** runs right after a successful deploy — `pnpm smoke`
