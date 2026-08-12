@@ -60,7 +60,7 @@ async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> 
   return new Response(null, { status: 302, headers });
 }
 
-function sanitizeNext(value: string): string {
+export function sanitizeNext(value: string): string {
   if (!value.startsWith("/") || value.startsWith("//")) return "/";
 
   for (const char of value) {
@@ -71,7 +71,7 @@ function sanitizeNext(value: string): string {
   return value;
 }
 
-async function timingSafeEqual(provided: string, expected: string): Promise<boolean> {
+export async function timingSafeEqual(provided: string, expected: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const [providedHash, expectedHash] = await Promise.all([
     crypto.subtle.digest("SHA-256", encoder.encode(provided)),
