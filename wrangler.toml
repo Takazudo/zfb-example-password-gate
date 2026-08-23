@@ -16,6 +16,13 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
+[dev]
+# Wrangler otherwise infers the HTTPS custom-domain route as the request
+# origin, which makes the localhost auth cookie Secure even over plain HTTP.
+host = "localhost"
+local_protocol = "http"
+upstream_protocol = "http"
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"
