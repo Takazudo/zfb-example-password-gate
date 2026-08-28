@@ -322,6 +322,30 @@ async function main() {
     `response set ${MARKER_COOKIE} for an incorrect password`,
   );
 
+  const malformedAuthResponse = await request(`${SITE_URL}/__auth`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  const malformedAuthBody = await malformedAuthResponse.text();
+  const malformedAuthCookies = setCookies(malformedAuthResponse);
+
+  check(
+    "(c) malformed POST /__auth is rejected with 401",
+    malformedAuthResponse.status === 401,
+    `expected 401, got ${malformedAuthResponse.status}`,
+  );
+  check(
+    "(c) malformed POST /__auth returns the login page",
+    isLoginPage(malformedAuthBody),
+    "response body did not contain the login page markers",
+  );
+  check(
+    "(c) malformed POST /__auth does not issue the marker cookie",
+    !malformedAuthCookies.some((cookie) => cookie.startsWith(`${MARKER_COOKIE}=`)),
+    `response set ${MARKER_COOKIE} for malformed input`,
+  );
+
   if (localAllowed) {
     console.log("SKIP  (d) TLS not applicable — target is a local http dev server");
   } else {

@@ -138,6 +138,33 @@ describe("default export fetch handler", () => {
     expect(response.headers.get("Set-Cookie")).toBeNull();
   });
 
+  it.each([
+    {
+      name: "an unsupported Content-Type",
+      headers: new Headers({ "Content-Type": "application/json" }),
+      body: "{}",
+    },
+    {
+      name: "no Content-Type",
+      headers: new Headers(),
+      body: new Uint8Array([0x70, 0x61, 0x73, 0x73]),
+    },
+  ])("returns the 401 login response for $name", async ({ headers, body }) => {
+    const { env, assetsFetch } = makeEnv();
+    const request = new Request("https://example.com/__auth", {
+      method: "POST",
+      headers,
+      body,
+    });
+    const response = await worker.fetch(request, env);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Content-Type")).toContain("text/html");
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(await response.text()).toContain("That password did not match.");
+    expect(assetsFetch).not.toHaveBeenCalled();
+  });
+
   it("redirects to / when next is hostile, even with the correct password", async () => {
     const { env } = makeEnv();
     const response = await login(env, { next: "//evil.example" });
