@@ -33,7 +33,13 @@ function hasValidMarker(request: Request): boolean {
 }
 
 async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> {
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return loginResponse("/", true);
+  }
+
   const password = form.get("password");
   const nextValue = form.get("next");
   const next = sanitizeNext(typeof nextValue === "string" ? nextValue : "/");
