@@ -246,7 +246,6 @@ time,
 }
 
 @media (max-width: 720px) {
-  .site-header,
   .split-layout,
   .timeline-item,
   .check-row {
@@ -255,6 +254,7 @@ time,
 
   .site-header {
     align-items: stretch;
+    flex-direction: column;
   }
 
   .site-nav {
