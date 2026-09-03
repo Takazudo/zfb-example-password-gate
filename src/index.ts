@@ -20,7 +20,7 @@ export default {
     const url = new URL(request.url);
 
     if (await hasValidMarker(request, env, url)) {
-      return env.ASSETS.fetch(request);
+      return withPrivateCaching(await env.ASSETS.fetch(request));
     }
 
     if (url.pathname === AUTH_PATH && request.method === "POST") {
@@ -30,6 +30,25 @@ export default {
     return loginResponse(sanitizeNext(url.pathname + url.search));
   },
 } satisfies ExportedHandler<RuntimeEnv>;
+
+// Gated content must never sit in a shared cache. env.ASSETS serves assets with
+// `Cache-Control: public, max-age=0, must-revalidate` and no Vary on Cookie, so
+// Cloudflare's edge stored authorized 200s under a key that ignored the gate and
+// replayed them to requests the Worker refuses. Observed live: after the marker
+// fix deployed, a forged-cookie request still got a 200 with cf-cache-status HIT
+// while the Worker itself was answering 401 (issue #25). The 401 path already
+// sets no-store; this gives the authorized path the same treatment.
+function withPrivateCaching(response: Response): Response {
+  const copy = new Response(response.body, response);
+  copy.headers.set("Cache-Control", "private, no-store");
+
+  const vary = copy.headers.get("Vary");
+  const parts = vary ? vary.split(",").map((part) => part.trim()).filter(Boolean) : [];
+  if (!parts.some((part) => part.toLowerCase() === "cookie")) parts.push("Cookie");
+  copy.headers.set("Vary", parts.join(", "));
+
+  return copy;
+}
 
 // The marker is derived from the password rather than being a constant, so there
 // is no value in this repository that opens a deployed gate (issue #23). Two
