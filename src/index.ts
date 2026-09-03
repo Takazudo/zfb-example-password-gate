@@ -2,9 +2,13 @@ import { parseCookieHeader, serializeCookie } from "./cookies";
 
 const AUTH_PATH = "/__auth";
 const COOKIE_NAME = "zfb_preview_gate";
-const AUTH_MARKER = "pg_01_hL7G9sR4vK2pQ8mN6bD3xA";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const DEV_PASSWORD = "preview-open-sesame";
+
+// Domain-separation label for the cookie marker. This is NOT a secret and is not
+// what makes the cookie unguessable -- the password is. Bump the suffix to force
+// every outstanding cookie to be re-issued without changing the password.
+const MARKER_LABEL = "zfb-preview-gate-marker-v1";
 
 // SITE_PASSWORD is a secret, not a wrangler.toml var, so keep it out of config.
 type RuntimeEnv = Env & {
@@ -15,7 +19,7 @@ export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
     const url = new URL(request.url);
 
-    if (hasValidMarker(request)) {
+    if (await hasValidMarker(request, env, url)) {
       return env.ASSETS.fetch(request);
     }
 
@@ -27,9 +31,36 @@ export default {
   },
 } satisfies ExportedHandler<RuntimeEnv>;
 
-function hasValidMarker(request: Request): boolean {
-  const cookies = parseCookieHeader(request.headers.get("Cookie"));
-  return cookies.get(COOKIE_NAME) === AUTH_MARKER;
+// The marker is derived from the password rather than being a constant, so there
+// is no value in this repository that opens a deployed gate (issue #23). Two
+// consequences fall out for free: when no password can be resolved -- an unbound
+// SITE_PASSWORD on a deployed host -- no cookie is valid either, so the gate is
+// genuinely closed rather than merely refusing the login form; and changing the
+// password invalidates every outstanding cookie, so rotation needs no separate step.
+async function hasValidMarker(request: Request, env: RuntimeEnv, url: URL): Promise<boolean> {
+  const presented = parseCookieHeader(request.headers.get("Cookie")).get(COOKIE_NAME);
+  if (typeof presented !== "string" || presented === "") return false;
+
+  const expectedPassword = resolveExpectedPassword(env, url);
+  if (expectedPassword === null) return false;
+
+  return timingSafeEqual(presented, await deriveMarker(expectedPassword));
+}
+
+// HMAC-SHA256(password, label). The password is the key, so the marker cannot be
+// computed without it, and it never appears in the cookie.
+export async function deriveMarker(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(MARKER_LABEL));
+
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -44,13 +75,13 @@ async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> 
   const nextValue = form.get("next");
   const next = sanitizeNext(typeof nextValue === "string" ? nextValue : "/");
   const url = new URL(request.url);
-  const expectedPassword = resolveExpectedPassword(env, url.hostname);
+  const expectedPassword = resolveExpectedPassword(env, url);
 
   if (expectedPassword === null) {
     // The only state the gate cannot serve. Log it so `wrangler tail` shows a
     // cause; without this the site looks normal and simply rejects everyone.
     console.error(
-      `SITE_PASSWORD is not set for ${url.hostname} — refusing every login. ` +
+      `SITE_PASSWORD is not set for ${url.host} — refusing every login. ` +
         "Set it with `wrangler secret put SITE_PASSWORD`.",
     );
     return loginResponse(next, true);
@@ -64,7 +95,7 @@ async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> 
   headers.set("Location", next);
   headers.append(
     "Set-Cookie",
-    serializeCookie(COOKIE_NAME, AUTH_MARKER, {
+    serializeCookie(COOKIE_NAME, await deriveMarker(expectedPassword), {
       path: "/",
       maxAge: COOKIE_MAX_AGE_SECONDS,
       httpOnly: true,
@@ -79,17 +110,18 @@ async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> 
 // Returns the password that opens the gate, or null for "nothing opens it".
 //
 // DEV_PASSWORD is committed to this public repo, so it must never authenticate
-// against a real deployment. If the SITE_PASSWORD secret is unbound, deleted, or
-// its name typo'd, a deployed host gets null and refuses every login rather than
-// silently accepting a password anyone can read here (issue #18). A blank or
-// whitespace-only secret counts as unset for the same reason -- a mis-set secret
-// must not degrade into the fallback either. The value itself is returned
-// untrimmed, so a password with deliberate surrounding space still works as set.
-export function resolveExpectedPassword(env: RuntimeEnv, hostname: string): string | null {
+// anywhere but a local dev server. If the SITE_PASSWORD secret is unbound,
+// deleted, its name typo'd, or set to blank/whitespace, a deployed origin gets
+// null and nothing opens the gate -- no login succeeds and no cookie validates
+// (issue #18). A blank secret is treated as unset on every origin, so it takes
+// the same path an absent one would; on a local dev origin that still means the
+// DEV_PASSWORD fallback, which is the point of the fallback. The secret is
+// returned untrimmed, so a password with deliberate surrounding space works as set.
+export function resolveExpectedPassword(env: RuntimeEnv, url: URL): string | null {
   const fromSecret = typeof env.SITE_PASSWORD === "string" ? env.SITE_PASSWORD : "";
   if (fromSecret.trim() !== "") return fromSecret;
 
-  return isLocalHost(hostname) ? DEV_PASSWORD : null;
+  return isLocalDevOrigin(url) ? DEV_PASSWORD : null;
 }
 
 export function sanitizeNext(value: string): string {
@@ -121,7 +153,18 @@ export async function timingSafeEqual(provided: string, expected: string): Promi
 }
 
 function shouldUseSecureCookie(url: URL): boolean {
-  return !(url.protocol === "http:" && isLocalHost(url.hostname));
+  return !isLocalDevOrigin(url);
+}
+
+// Plain http on a loopback name. url.hostname comes from the Host header, which
+// the client controls, so the protocol half matters: a real deployment is always
+// https, and pairing the two means a spoofed `Host: localhost` cannot reach the
+// dev fallback even if this Worker later sits behind a wildcard route or a proxy
+// that forwards Host through. Note this makes an https local dev server behave
+// like a deployment -- see the README; `wrangler dev` is plain http by default
+// and wrangler.toml pins local_protocol = "http".
+function isLocalDevOrigin(url: URL): boolean {
+  return url.protocol === "http:" && isLocalHost(url.hostname);
 }
 
 function isLocalHost(hostname: string): boolean {
