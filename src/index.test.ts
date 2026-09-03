@@ -394,6 +394,18 @@ describe("marker cookie is derived from the password, not a committed constant (
     expect(assetsFetch).not.toHaveBeenCalled();
   });
 
+  // A cookie minted against local dev must not travel to a deployment. It falls
+  // out of the derivation (different key), but it is the cross-origin case worth
+  // pinning explicitly rather than inferring from the rotation test.
+  it("rejects a locally minted dev-password marker on a deployed origin", async () => {
+    const localMarker = await deriveMarker(DEV_PASSWORD);
+    const { env, assetsFetch } = makeEnv("real-password");
+    const response = await get(env, `zfb_preview_gate=${localMarker}`);
+
+    expect(response.status).toBe(401);
+    expect(assetsFetch).not.toHaveBeenCalled();
+  });
+
   it("still admits a locally derived marker on a local dev origin", async () => {
     const { env } = makeEnv(null);
     const marker = await deriveMarker(DEV_PASSWORD);
