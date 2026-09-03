@@ -415,3 +415,67 @@ describe("marker cookie is derived from the password, not a committed constant (
     expect((await get(env, cookie)).status).toBe(200);
   });
 });
+
+describe("gated content is never stored in a shared cache (issue #25)", () => {
+  // env.ASSETS answers with the asset layer's own caching headers. Reproduced
+  // here, because those headers are what Cloudflare's edge acted on: it stored
+  // an authorized 200 and replayed it to a request the Worker had begun refusing.
+  function makeEnv(assetHeaders: Record<string, string>) {
+    const assetsFetch = vi.fn(
+      async () => new Response("asset-body", { headers: assetHeaders }),
+    );
+    const env = {
+      ASSETS: { fetch: assetsFetch },
+      SITE_PASSWORD: "real-password",
+    } as unknown as Env & { SITE_PASSWORD?: string };
+    return { env, assetsFetch };
+  }
+
+  const authorized = async (env: Env & { SITE_PASSWORD?: string }) =>
+    worker.fetch(
+      new Request("https://example.com/docs", {
+        headers: { Cookie: `zfb_preview_gate=${await deriveMarker("real-password")}` },
+      }),
+      env,
+    );
+
+  it("replaces the asset layer's public caching with private, no-store", async () => {
+    const { env } = makeEnv({ "Cache-Control": "public, max-age=0, must-revalidate" });
+    const response = await authorized(env);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  it("varies on Cookie so no shared cache keys across the gate", async () => {
+    const { env } = makeEnv({});
+    const response = await authorized(env);
+
+    expect(response.headers.get("Vary")).toBe("Cookie");
+  });
+
+  it("appends Cookie to an existing Vary rather than dropping it", async () => {
+    const { env } = makeEnv({ Vary: "Accept-Encoding" });
+    const varyHeader = (await authorized(env)).headers.get("Vary") ?? "";
+    const parts = varyHeader.split(",").map((part) => part.trim());
+
+    expect(parts).toContain("Accept-Encoding");
+    expect(parts).toContain("Cookie");
+  });
+
+  it("does not duplicate Cookie when the asset layer already varies on it", async () => {
+    const { env } = makeEnv({ Vary: "Cookie" });
+    const varyHeader = (await authorized(env)).headers.get("Vary") ?? "";
+
+    expect(varyHeader.toLowerCase().split(",").filter((p) => p.trim() === "cookie")).toHaveLength(1);
+  });
+
+  it("preserves the asset body and its other headers", async () => {
+    const { env } = makeEnv({ "Content-Type": "text/css", ETag: '"abc"' });
+    const response = await authorized(env);
+
+    expect(await response.text()).toBe("asset-body");
+    expect(response.headers.get("Content-Type")).toBe("text/css");
+    expect(response.headers.get("ETag")).toBe('"abc"');
+  });
+});
