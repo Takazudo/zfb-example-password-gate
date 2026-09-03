@@ -410,17 +410,25 @@ async function main() {
   // them passes against a deploy that hands out site content to this cookie. The
   // marker is now HMAC(password, label), so this must be rejected on every origin
   // — unlike (e), there is no local carve-out, because no password derives it.
-  const forgedResponse = await request(`${SITE_URL}/`, {
-    headers: { cookie: `${MARKER_COOKIE}=${RETIRED_AUTH_MARKER}` },
-  });
-  const forgedBody = await forgedResponse.text();
+  // Asserted as a PAIR, against the same path in the same run: the whole bug was
+  // that these two diverged — no cookie gave the login page while the published
+  // constant gave site content. Requiring both to be the identical 401 login page
+  // is what makes that divergence impossible to ship again.
+  const [bareResponse, forgedResponse] = await Promise.all([
+    request(`${SITE_URL}/`),
+    request(`${SITE_URL}/`, { headers: { cookie: `${MARKER_COOKIE}=${RETIRED_AUTH_MARKER}` } }),
+  ]);
+  const [bareBody, forgedBody] = await Promise.all([bareResponse.text(), forgedResponse.text()]);
+  const gated = (response, body) => response.status === 401 && isLoginPage(body);
 
   check(
-    "(f) the retired committed marker cookie does not open the gate",
-    forgedResponse.status === 401 && isLoginPage(forgedBody),
-    `expected the 401 login page, got ${forgedResponse.status} — a cookie value published in ` +
-      "this repository is being accepted, so anyone who can read the source can bypass the " +
-      "password entirely. The deployed code predates the password-derived marker; redeploy",
+    "(f) GET / with no cookie and GET / with the retired committed marker are both the 401 login page",
+    gated(bareResponse, bareBody) && gated(forgedResponse, forgedBody),
+    `no cookie -> ${bareResponse.status}, retired marker cookie -> ${forgedResponse.status} ` +
+      "(both must be the 401 login page). A cookie value published in this repository is being " +
+      "accepted, so anyone who can read the source can bypass the password entirely. Either the " +
+      "deployed code predates the password-derived marker (redeploy), or an edge cache is " +
+      "replaying an authorized body (check cf-cache-status)",
   );
 
   if (localAllowed) {
