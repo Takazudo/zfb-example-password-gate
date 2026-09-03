@@ -68,7 +68,7 @@ gh secret list --repo Takazudo/zfb-example-password-gate
 
 The equivalent dashboard path is **Settings → Secrets and variables → Actions**.
 
-## 3. Set the `SITE_PASSWORD` Worker secret (optional, but do it)
+## 3. Set the `SITE_PASSWORD` Worker secret (required for a usable deploy)
 
 This one is a **Cloudflare-side Worker secret, not a GitHub secret**. It never
 appears in `wrangler.toml` and is not needed for the deploy to succeed:
@@ -80,27 +80,37 @@ pnpm exec wrangler secret put SITE_PASSWORD
 Wrangler needs to be authenticated for this — either run `wrangler login`, or
 export the same token from step 1 as `CLOUDFLARE_API_TOKEN` in your shell.
 
-**Why you want it.** `src/index.ts` falls back to a hardcoded development
-password when the secret is absent:
+**Why you need it.** `src/index.ts` falls back to a hardcoded development
+password, but only on a local hostname:
 
 ```ts
 const DEV_PASSWORD = "preview-open-sesame";
 // …
-const expectedPassword = env.SITE_PASSWORD || DEV_PASSWORD;
+export function resolveExpectedPassword(env: RuntimeEnv, hostname: string): string | null {
+  const fromSecret = typeof env.SITE_PASSWORD === "string" ? env.SITE_PASSWORD : "";
+  if (fromSecret.trim() !== "") return fromSecret;
+
+  return isLocalHost(hostname) ? DEV_PASSWORD : null;
+}
 ```
 
 That fallback exists so `wrangler dev --local` and the README's manual checks
-work without any Cloudflare state. Deploying without setting `SITE_PASSWORD`
-ships it to a public `workers.dev` URL — and `preview-open-sesame` is the
-published default of a public example repo, so anyone who has read this
-repository can open your preview. The README's **Trust model** section is
-already explicit that this is a shared-password gate rather than
-authentication; leaving the fallback in place weakens it further, to a gate
-whose password is a matter of public record.
+work without any Cloudflare state. `preview-open-sesame` is the published
+default of a public example repo, so anyone who has read this repository knows
+it — which is why it can never authenticate against a deployed host. On any
+non-local hostname an absent, deleted, mistyped, or blank `SITE_PASSWORD`
+returns `null` and the gate refuses **every** login, logging
+`SITE_PASSWORD is not set for <host>` for `wrangler tail` (issue #18).
+
+So a deploy without the secret is not an insecure preview; it is a preview
+nobody can open. That is deliberate: the alternative failure mode — a live gate
+whose password is a matter of public record — produces no visible signal at all.
+The README's **Trust model** section is already explicit that this is a
+shared-password gate rather than authentication.
 
 Set it before you hand the URL to anyone. Worker secrets take effect
-immediately and survive later deploys, so no redeploy is required after
-changing it.
+immediately and survive later deploys, so no redeploy is required after setting
+or changing it.
 
 If you run this before the first deploy, Wrangler will offer to create the
 Worker script so it has somewhere to attach the secret; accepting is fine, and
@@ -202,12 +212,19 @@ reads `CLOUDFLARE_API_TOKEN` only; a token set without
 `CLOUDFLARE_ACCOUNT_ID` clears preflight and then fails inside `wrangler
 deploy`, so set both.
 
-**The gate accepts `preview-open-sesame`.** `SITE_PASSWORD` was never set on
-the Worker, so it is falling back to the development default. Do step 3, then
-re-run the step 5 curl. Setting the secret is enough — no redeploy needed.
+**The gate rejects every password, including one you just set.**
+`SITE_PASSWORD` is not bound to the Worker, so the gate is failing closed on
+purpose rather than falling back to the repo's published development password.
+Confirm with `wrangler secret list` (it returns `[]`) or `wrangler tail` (it
+logs `SITE_PASSWORD is not set for <host>`), then do step 3 and re-run the step
+5 curl. Setting the secret is enough — no redeploy needed. A GitHub Actions
+repo secret named `SITE_PASSWORD` does **not** count: the workflow would see it
+and the running Worker still would not.
+
 Note that anyone already holding the marker cookie keeps access until it
 expires, since the Worker only checks the cookie value; the cookie's lifetime is
-one year.
+one year. So if this Worker was ever deployed with the secret unset, rotate
+`AUTH_MARKER` in `src/index.ts` to invalidate cookies handed out in that window.
 
 **`wrangler deploy` fails with an authentication or authorization error.** The
 token is missing **Workers Scripts — Edit**, or its Account Resources scope does

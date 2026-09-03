@@ -22,7 +22,8 @@ For the ordered from-zero walkthrough (API token, repo secrets, first deploy,
 verification), see [docs/cloudflare-setup.md](docs/cloudflare-setup.md). The
 notes below are the reference summary.
 
-Set the production password as a Worker secret:
+Set the production password as a Worker secret. This is **required** for a
+deployed gate — without it the Worker refuses every login (see below):
 
 ```sh
 pnpm exec wrangler secret put SITE_PASSWORD
@@ -40,8 +41,17 @@ line enabled. Without it, Workers Static Assets may serve public files before
 the Worker can ask for the preview password.**
 
 For local Wrangler checks, the Worker uses the hardcoded development fallback
-password `preview-open-sesame` when `SITE_PASSWORD` is absent. You can also add a
-local `.dev.vars` file with `SITE_PASSWORD=...`; do not commit that file.
+password `preview-open-sesame` when `SITE_PASSWORD` is absent. That fallback is
+**localhost-only** — it is honoured only when the request hostname is
+`localhost`, `127.0.0.1`, or `[::1]`. On any other hostname an absent (or blank)
+`SITE_PASSWORD` makes the gate refuse *every* login and log the reason, rather
+than fall back to a password that is published in this repository. You can also
+add a local `.dev.vars` file with `SITE_PASSWORD=...`; do not commit that file.
+
+If a deployed gate rejects a password you know is right, that is the signal: the
+secret is not bound to the Worker. `wrangler secret list` returns `[]`, and
+`wrangler tail` shows `SITE_PASSWORD is not set for <host>`. Setting the secret
+fixes it immediately — no redeploy needed.
 
 ## Trust model
 
@@ -126,7 +136,7 @@ Add these under **Settings → Secrets and variables → Actions** (step-by-step
 | `CLOUDFLARE_API_TOKEN` | API token with Account · Workers Scripts: Edit and Zone · Workers Routes: Edit |
 | `CLOUDFLARE_ACCOUNT_ID` | target Cloudflare account id |
 
-`SITE_PASSWORD` is a Worker secret set with `wrangler secret put` (it has a local dev fallback), not a GitHub secret.
+`SITE_PASSWORD` is a Worker secret set with `wrangler secret put` (it has a localhost-only dev fallback; a deployed Worker without it refuses every login), not a GitHub secret.
 
 ### Cloudflare API token permissions
 
