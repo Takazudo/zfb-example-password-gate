@@ -43,13 +43,23 @@ async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> 
   const password = form.get("password");
   const nextValue = form.get("next");
   const next = sanitizeNext(typeof nextValue === "string" ? nextValue : "/");
-  const expectedPassword = env.SITE_PASSWORD || DEV_PASSWORD;
+  const url = new URL(request.url);
+  const expectedPassword = resolveExpectedPassword(env, url.hostname);
+
+  if (expectedPassword === null) {
+    // The only state the gate cannot serve. Log it so `wrangler tail` shows a
+    // cause; without this the site looks normal and simply rejects everyone.
+    console.error(
+      `SITE_PASSWORD is not set for ${url.hostname} — refusing every login. ` +
+        "Set it with `wrangler secret put SITE_PASSWORD`.",
+    );
+    return loginResponse(next, true);
+  }
 
   if (typeof password !== "string" || !(await timingSafeEqual(password, expectedPassword))) {
     return loginResponse(next, true);
   }
 
-  const url = new URL(request.url);
   const headers = gateHeaders();
   headers.set("Location", next);
   headers.append(
@@ -64,6 +74,22 @@ async function handleAuth(request: Request, env: RuntimeEnv): Promise<Response> 
   );
 
   return new Response(null, { status: 302, headers });
+}
+
+// Returns the password that opens the gate, or null for "nothing opens it".
+//
+// DEV_PASSWORD is committed to this public repo, so it must never authenticate
+// against a real deployment. If the SITE_PASSWORD secret is unbound, deleted, or
+// its name typo'd, a deployed host gets null and refuses every login rather than
+// silently accepting a password anyone can read here (issue #18). A blank or
+// whitespace-only secret counts as unset for the same reason -- a mis-set secret
+// must not degrade into the fallback either. The value itself is returned
+// untrimmed, so a password with deliberate surrounding space still works as set.
+export function resolveExpectedPassword(env: RuntimeEnv, hostname: string): string | null {
+  const fromSecret = typeof env.SITE_PASSWORD === "string" ? env.SITE_PASSWORD : "";
+  if (fromSecret.trim() !== "") return fromSecret;
+
+  return isLocalHost(hostname) ? DEV_PASSWORD : null;
 }
 
 export function sanitizeNext(value: string): string {

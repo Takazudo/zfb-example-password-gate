@@ -32,6 +32,12 @@ const REQUIRE_LIVE = /^(1|true)$/i.test(process.env.SMOKE_REQUIRE_LIVE ?? "");
 const LOGIN_PAGE_MARKERS = ["<title>Preview password</title>", 'action="/__auth"'];
 const MARKER_COOKIE = "zfb_preview_gate";
 
+// The DEV_PASSWORD constant committed in src/index.ts. Submitting it on purpose is
+// the point of assertion (e): it is public to anyone who can read this repo, so a
+// deployed host that accepts it is wide open. Safe to hardcode here for the same
+// reason it is unsafe to accept there.
+const COMMITTED_DEV_PASSWORD = "preview-open-sesame";
+
 const ATTEMPTS = 6;
 const BACKOFF_MS = [3000, 6000, 10000, 15000, 20000];
 
@@ -217,14 +223,24 @@ async function findDeployedAssetPath() {
   return asset;
 }
 
+// Mirrors isLocalHost() in src/index.ts. That function gates two separate
+// carve-outs there -- the Secure cookie (which also requires http) and the
+// DEV_PASSWORD fallback (which does not) -- so the hostname test is factored out
+// on its own and each caller adds the protocol condition it actually needs.
+function hasLocalHostname(url) {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 // Plain http is tolerated only against a local `wrangler dev`, so the same
-// script can be run before pushing. Mirrors isLocalHost() in src/index.ts,
-// which makes the identical carve-out for the Secure cookie.
+// script can be run before pushing.
 function isLocalTarget(url) {
   try {
-    const { protocol, hostname } = new URL(url);
-    const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
-    return protocol === "http:" && local;
+    return new URL(url).protocol === "http:" && hasLocalHostname(url);
   } catch {
     return false;
   }
@@ -345,6 +361,41 @@ async function main() {
     !malformedAuthCookies.some((cookie) => cookie.startsWith(`${MARKER_COOKIE}=`)),
     `response set ${MARKER_COOKIE} for malformed input`,
   );
+
+  // (e) The committed development password must not open a deployed gate.
+  // Every check above still passes on a deploy whose SITE_PASSWORD secret was
+  // never bound: the gate is up, unauthenticated requests are 401, assets are
+  // gated -- and the password that opens it is published in this repository.
+  // That is the one failure mode with no visible signal (issue #18), so it needs
+  // an assertion that submits the constant on purpose. On a local dev host the
+  // fallback is the intended behavior, so the assertion inverts to match.
+  if (hasLocalHostname(SITE_URL)) {
+    // Not merely unassertable but pointless to send: against a local host the
+    // fallback is live, so the request would authenticate and take a real
+    // marker cookie for nothing.
+    console.log("SKIP  (e) committed dev password — it is meant to work against a local dev host");
+  } else {
+    const devPasswordResponse = await request(`${SITE_URL}/__auth`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: COMMITTED_DEV_PASSWORD, next: "/" }),
+    });
+    const devPasswordCookies = setCookies(devPasswordResponse);
+
+    check(
+      "(e) POST /__auth with the committed dev password is rejected with 401",
+      devPasswordResponse.status === 401,
+      `expected 401, got ${devPasswordResponse.status} — the gate is accepting a password that is ` +
+        "public in this repository, which means the SITE_PASSWORD secret is not bound to this " +
+        "Worker (`wrangler secret list` will show []). Set it with `wrangler secret put " +
+        "SITE_PASSWORD`; no redeploy is needed",
+    );
+    check(
+      "(e) the committed dev password does not issue the marker cookie",
+      !devPasswordCookies.some((cookie) => cookie.startsWith(`${MARKER_COOKIE}=`)),
+      `response set ${MARKER_COOKIE} for the repository's published development password`,
+    );
+  }
 
   if (localAllowed) {
     console.log("SKIP  (d) TLS not applicable — target is a local http dev server");

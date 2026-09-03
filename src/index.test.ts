@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import worker, { sanitizeNext, timingSafeEqual } from "./index";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import worker, { resolveExpectedPassword, sanitizeNext, timingSafeEqual } from "./index";
+
+// The committed fallback, spelled out rather than imported: these tests assert
+// that this exact public string cannot open a deployed gate, which is a claim
+// about the literal in the repo, not about whatever the constant happens to hold.
+const DEV_PASSWORD = "preview-open-sesame";
 
 describe("sanitizeNext", () => {
   it("passes through an unchanged path with query and hash", () => {
@@ -52,11 +57,13 @@ describe("timingSafeEqual", () => {
 describe("default export fetch handler", () => {
   const SITE_PASSWORD = "test-password";
 
-  function makeEnv() {
+  // `null` models the secret being unbound entirely (the issue #18 state); a
+  // string models it being bound to that value, including "" and whitespace.
+  function makeEnv(sitePassword: string | null = SITE_PASSWORD) {
     const assetsFetch = vi.fn(async () => new Response("asset-body"));
     const env = {
       ASSETS: { fetch: assetsFetch },
-      SITE_PASSWORD,
+      ...(sitePassword === null ? {} : { SITE_PASSWORD: sitePassword }),
     } as unknown as Env & { SITE_PASSWORD?: string };
     return { env, assetsFetch };
   }
@@ -181,5 +188,107 @@ describe("default export fetch handler", () => {
     const { env: httpsEnv } = makeEnv();
     const httpsResponse = await login(httpsEnv, { url: "https://example.com/__auth" });
     expect(httpsResponse.headers.get("Set-Cookie")).toContain("Secure");
+  });
+});
+
+describe("resolveExpectedPassword", () => {
+  const env = (SITE_PASSWORD?: string) => ({ SITE_PASSWORD }) as Env & { SITE_PASSWORD?: string };
+
+  it("returns the secret when it is set, on any host", () => {
+    expect(resolveExpectedPassword(env("real"), "example.com")).toBe("real");
+    expect(resolveExpectedPassword(env("real"), "localhost")).toBe("real");
+  });
+
+  it("returns the secret verbatim, without trimming a deliberately spaced password", () => {
+    expect(resolveExpectedPassword(env("  spaced  "), "example.com")).toBe("  spaced  ");
+  });
+
+  it.each([undefined, "", "   ", "\t\n"])(
+    "returns null on a deployed host when the secret is %j",
+    (secret) => {
+      expect(resolveExpectedPassword(env(secret), "example.com")).toBeNull();
+    },
+  );
+
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "falls back to the dev password on %s when the secret is unset",
+    (hostname) => {
+      expect(resolveExpectedPassword(env(undefined), hostname)).toBe(DEV_PASSWORD);
+    },
+  );
+});
+
+describe("gate fails closed when SITE_PASSWORD is unbound (issue #18)", () => {
+  function makeEnv(sitePassword: string | null) {
+    const assetsFetch = vi.fn(async () => new Response("asset-body"));
+    const env = {
+      ASSETS: { fetch: assetsFetch },
+      ...(sitePassword === null ? {} : { SITE_PASSWORD: sitePassword }),
+    } as unknown as Env & { SITE_PASSWORD?: string };
+    return { env, assetsFetch };
+  }
+
+  function login(
+    env: Env & { SITE_PASSWORD?: string },
+    password: string,
+    url = "https://example.com/__auth",
+  ) {
+    const body = new URLSearchParams({ password, next: "/" });
+    return worker.fetch(new Request(url, { method: "POST", body }), env);
+  }
+
+  // The diagnostic is deliberate output, so keep it out of the test log while
+  // still proving it fires.
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  afterEach(() => consoleError.mockClear());
+
+  // The whole point of the issue: preview-open-sesame is public in this repo, so
+  // an unbound secret must not turn it into a working production password.
+  it.each([
+    { label: "unbound", secret: null },
+    { label: "empty", secret: "" },
+    { label: "whitespace-only", secret: "   " },
+  ])("refuses the committed dev password on a deployed host when the secret is $label", async ({ secret }) => {
+    const { env, assetsFetch } = makeEnv(secret);
+    const response = await login(env, DEV_PASSWORD);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(assetsFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses an arbitrary password too — nothing opens an unconfigured gate", async () => {
+    const { env } = makeEnv(null);
+    const response = await login(env, "anything-at-all");
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  it("logs the misconfiguration so wrangler tail shows a cause", async () => {
+    const { env } = makeEnv(null);
+    await login(env, DEV_PASSWORD);
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0]?.[0]).toContain("SITE_PASSWORD is not set");
+  });
+
+  it.each(["http://localhost/__auth", "http://127.0.0.1/__auth"])(
+    "still accepts the dev password at %s so wrangler dev keeps working",
+    async (url) => {
+      const { env } = makeEnv(null);
+      const response = await login(env, DEV_PASSWORD, url);
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Set-Cookie")).toContain("zfb_preview_gate=");
+      expect(consoleError).not.toHaveBeenCalled();
+    },
+  );
+
+  it("prefers a bound secret over the dev password even on localhost", async () => {
+    const { env } = makeEnv("real-password");
+
+    expect((await login(env, DEV_PASSWORD, "http://localhost/__auth")).status).toBe(401);
+    expect((await login(env, "real-password", "http://localhost/__auth")).status).toBe(302);
   });
 });
