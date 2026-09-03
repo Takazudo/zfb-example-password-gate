@@ -369,17 +369,19 @@ async function main() {
   // That is the one failure mode with no visible signal (issue #18), so it needs
   // an assertion that submits the constant on purpose. On a local dev host the
   // fallback is the intended behavior, so the assertion inverts to match.
-  const devPasswordResponse = await request(`${SITE_URL}/__auth`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ password: COMMITTED_DEV_PASSWORD, next: "/" }),
-  });
-  const devPasswordCookies = setCookies(devPasswordResponse);
-  const issuedMarker = devPasswordCookies.some((cookie) => cookie.startsWith(`${MARKER_COOKIE}=`));
-
   if (hasLocalHostname(SITE_URL)) {
+    // Not merely unassertable but pointless to send: against a local host the
+    // fallback is live, so the request would authenticate and take a real
+    // marker cookie for nothing.
     console.log("SKIP  (e) committed dev password — it is meant to work against a local dev host");
   } else {
+    const devPasswordResponse = await request(`${SITE_URL}/__auth`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: COMMITTED_DEV_PASSWORD, next: "/" }),
+    });
+    const devPasswordCookies = setCookies(devPasswordResponse);
+
     check(
       "(e) POST /__auth with the committed dev password is rejected with 401",
       devPasswordResponse.status === 401,
@@ -390,7 +392,7 @@ async function main() {
     );
     check(
       "(e) the committed dev password does not issue the marker cookie",
-      !issuedMarker,
+      !devPasswordCookies.some((cookie) => cookie.startsWith(`${MARKER_COOKIE}=`)),
       `response set ${MARKER_COOKIE} for the repository's published development password`,
     );
   }
