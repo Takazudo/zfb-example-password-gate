@@ -53,6 +53,28 @@ secret is not bound to the Worker. `wrangler secret list` returns `[]`, and
 `wrangler tail` shows `SITE_PASSWORD is not set for <host>`. Setting the secret
 fixes it immediately — no redeploy needed.
 
+The same applies to `wrangler dev --remote`, and to local dev reached over
+anything but plain http on a loopback name — an https dev server, or
+`--ip 0.0.0.0` reached at `http://192.168.x.x:8787`. Those are deployed origins
+as far as the gate is concerned, so the fallback does not apply and every
+password is rejected. Use plain `wrangler dev`, or put `SITE_PASSWORD=...` in
+`.dev.vars`.
+
+## The marker cookie is derived from the password
+
+A successful login sets `zfb_preview_gate` to
+`HMAC-SHA256(password, "zfb-preview-gate-marker-v1")`, and that cookie is
+checked before any password logic on every request. It used to be a fixed
+constant committed to this repo, which meant anyone who read the source could
+forge it and skip the password entirely (issue #23).
+
+Deriving it from the password has two consequences worth knowing: changing
+`SITE_PASSWORD` invalidates every outstanding cookie automatically, so rotation
+needs no separate step; and when no password resolves — an unbound secret on a
+deployed origin — no cookie validates either, which is what makes "closed"
+actually mean closed. To force re-authentication without changing the password,
+bump the version suffix on `MARKER_LABEL` in `src/index.ts`.
+
 ## Trust model
 
 This is a shared password preview gate, not identity or user authentication. It

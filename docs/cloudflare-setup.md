@@ -108,6 +108,14 @@ whose password is a matter of public record — produces no visible signal at al
 The README's **Trust model** section is already explicit that this is a
 shared-password gate rather than authentication.
 
+That claim holds only because the marker cookie is derived from the password
+too. `hasValidMarker` runs *before* any password logic, so while the marker was
+a constant committed here, presenting it opened any deployment without
+submitting a password at all — and an unbound secret closed the login form while
+leaving every such cookie working (issue #23). The marker is now
+`HMAC-SHA256(resolved password, "zfb-preview-gate-marker-v1")`, so when no
+password resolves, no cookie validates either.
+
 Set it before you hand the URL to anyone. Worker secrets take effect
 immediately and survive later deploys, so no redeploy is required after setting
 or changing it.
@@ -221,10 +229,11 @@ logs `SITE_PASSWORD is not set for <host>`), then do step 3 and re-run the step
 repo secret named `SITE_PASSWORD` does **not** count: the workflow would see it
 and the running Worker still would not.
 
-Note that anyone already holding the marker cookie keeps access until it
-expires, since the Worker only checks the cookie value; the cookie's lifetime is
-one year. So if this Worker was ever deployed with the secret unset, rotate
-`AUTH_MARKER` in `src/index.ts` to invalidate cookies handed out in that window.
+Cookies handed out under a previous password stop working the moment you set a
+new one: the marker is an HMAC of the password, so rotating the password rotates
+every outstanding cookie. There is no separate constant to bump. (To force
+re-authentication *without* changing the password, bump the version suffix on
+`MARKER_LABEL` in `src/index.ts` and redeploy.)
 
 **`wrangler deploy` fails with an authentication or authorization error.** The
 token is missing **Workers Scripts — Edit**, or its Account Resources scope does

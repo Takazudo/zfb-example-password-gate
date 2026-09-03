@@ -38,6 +38,12 @@ const MARKER_COOKIE = "zfb_preview_gate";
 // reason it is unsafe to accept there.
 const COMMITTED_DEV_PASSWORD = "preview-open-sesame";
 
+// The fixed marker this gate shipped with before the cookie became a per-password
+// HMAC. It was in the repo, and hasValidMarker short-circuits ahead of all password
+// logic, so presenting it opened any deployment without submitting a password at
+// all (issue #23). Assertion (f) is the one that catches a regression to that.
+const RETIRED_AUTH_MARKER = "pg_01_hL7G9sR4vK2pQ8mN6bD3xA";
+
 const ATTEMPTS = 6;
 const BACKOFF_MS = [3000, 6000, 10000, 15000, 20000];
 
@@ -386,9 +392,10 @@ async function main() {
       "(e) POST /__auth with the committed dev password is rejected with 401",
       devPasswordResponse.status === 401,
       `expected 401, got ${devPasswordResponse.status} — the gate is accepting a password that is ` +
-        "public in this repository, which means the SITE_PASSWORD secret is not bound to this " +
-        "Worker (`wrangler secret list` will show []). Set it with `wrangler secret put " +
-        "SITE_PASSWORD`; no redeploy is needed",
+        "public in this repository. Either the deployed code predates the host guard (check " +
+        "`wrangler deployments list` and redeploy), or SITE_PASSWORD is deliberately set to the " +
+        "published default (set it to something else with `wrangler secret put SITE_PASSWORD`; " +
+        "no redeploy needed)",
     );
     check(
       "(e) the committed dev password does not issue the marker cookie",
@@ -396,6 +403,25 @@ async function main() {
       `response set ${MARKER_COOKIE} for the repository's published development password`,
     );
   }
+
+  // (f) No value committed to this repository may open the gate. The marker cookie
+  // is checked BEFORE any password logic, so while it was a constant it was the
+  // strongest bypass in the gate and none of (a)-(e) could see it: every one of
+  // them passes against a deploy that hands out site content to this cookie. The
+  // marker is now HMAC(password, label), so this must be rejected on every origin
+  // — unlike (e), there is no local carve-out, because no password derives it.
+  const forgedResponse = await request(`${SITE_URL}/`, {
+    headers: { cookie: `${MARKER_COOKIE}=${RETIRED_AUTH_MARKER}` },
+  });
+  const forgedBody = await forgedResponse.text();
+
+  check(
+    "(f) the retired committed marker cookie does not open the gate",
+    forgedResponse.status === 401 && isLoginPage(forgedBody),
+    `expected the 401 login page, got ${forgedResponse.status} — a cookie value published in ` +
+      "this repository is being accepted, so anyone who can read the source can bypass the " +
+      "password entirely. The deployed code predates the password-derived marker; redeploy",
+  );
 
   if (localAllowed) {
     console.log("SKIP  (d) TLS not applicable — target is a local http dev server");
