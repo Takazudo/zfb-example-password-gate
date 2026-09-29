@@ -4,6 +4,13 @@ A small static zfb preview site protected by a hand-written Cloudflare Worker
 password gate. zfb builds only static assets; the Worker checks the shared
 preview password before it lets any request reach those assets.
 
+The pages are rendered at build time with zfb's own JSX runtime, zudo-react
+(`jsxImportSource: "@takazudo/zfb/zudo-react"`, HTML attribute spellings such
+as `class`, `charset` and `datetime`). The site ships no client JavaScript.
+Styling is plain authored CSS in `styles/global.css`, on top of the zudo-wind
+`owned-v1` reset (`"wind": { "spec": 1, "reset": "owned-v1" }` in
+`zfb.config.json`); no utility classes are used.
+
 ## Local run
 
 ```sh
@@ -79,8 +86,10 @@ bump the version suffix on `MARKER_LABEL` in `src/index.ts`.
 
 This is a shared password preview gate, not identity or user authentication. It
 does not create users, sessions, roles, audit trails, logout, or per-person
-authorization. Anyone with the shared password can enter, and anyone with the
-fixed marker cookie value can keep using the preview until the cookie expires.
+authorization. Anyone with the shared password can enter. The marker cookie
+cannot be forged without the password, but it is a bearer token: anyone who
+obtains a valid `zfb_preview_gate` cookie value can keep using the preview until
+the cookie expires or the password (or `MARKER_LABEL`) is rotated.
 
 Use Cloudflare Access, an identity provider, or application-level auth for
 private production data. This example is for low-risk preview sites where a

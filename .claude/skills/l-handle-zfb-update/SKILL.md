@@ -8,7 +8,7 @@ description: >-
   update', or 'handle zfb update', (2) A new zfb release is out and this
   example should track it.
 user-invocable: true
-argument-hint: "[target-version, e.g. 2.3.0 — omit to use latest stable]"
+argument-hint: "[target-version, e.g. 3.0.1 — omit to use latest stable]"
 ---
 
 # Handle zfb Update — password-gate
@@ -46,7 +46,11 @@ TARGET=${1:-$(npm view @takazudo/zfb dist-tags.latest)}
   from `next` would pin a prerelease of an already-released version.
 - If `CURRENT` == `TARGET`: report "already at the latest stable (<version>)" and STOP.
 - If an explicit target is older than `CURRENT`, that is a downgrade — stop and
-  confirm first.
+  confirm first. This project is on the zfb **3.x** line (floor 3.0.0: zudo-react
+  + zudo-wind); a target below 3.0.0 is always a downgrade.
+- If the MAJOR version changes (e.g. 3.x → 4.0.0), treat it as a **migration**,
+  not a two-line bump: read the upstream `guides/migrating-to-v<N>` doc, and run
+  the full "Major-version verification" in Step 5.
 
 ## Step 2 — Review upstream changes BEFORE bumping
 
@@ -83,10 +87,11 @@ Flag anything that touches a surface this example uses:
 
 | Upstream surface | Where this project uses it |
 | --- | --- |
-| `defineConfig` schema | `zfb.config.json` — static build settings |
-| Static build output (`zfb build` → `dist/`) | served by the gate Worker via `env.ASSETS` — see `src/index.ts` |
-| Preact page rendering | `pages/index.tsx`, `pages/checklist.tsx`, `pages/updates.tsx`, `layouts/default.tsx` |
-| CLI (`zfb dev/build/preview/check`) | `package.json` scripts |
+| Config schema (JSON form) | `zfb.config.json` — `output`/`outDir`/`publicDir` and `wind` |
+| zudo-wind reset (`wind.reset: "owned-v1"`) and class scanning | `styles/global.css` (authored CSS only, no utilities) on top of the owned reset; every class in `layouts/`/`pages/` must stay an "ordinary class" (`pnpm exec zfb wind explain <class>`) |
+| zudo-react static rendering (`jsxImportSource: "@takazudo/zfb/zudo-react"`, `Child`, HTML attribute spellings) | `pages/index.tsx`, `pages/checklist.tsx`, `pages/updates.tsx`, `layouts/default.tsx` |
+| Static build output (`zfb build` → `dist/`, `/assets/styles-*.css`) | served by the gate Worker via `env.ASSETS` — see `src/index.ts`; `scripts/smoke.mjs` picks a real `/assets/*.css` from `dist/` |
+| CLI (`zfb dev/build/preview/check`, `zfb wind audit/explain`) | `package.json` scripts; migration checks |
 
 The hand-written Worker (`src/index.ts`, `src/cookies.ts`, typed by
 `worker-configuration.d.ts`) is independent of zfb; upstream zfb changes should
@@ -122,10 +127,41 @@ pnpm build       # produces the static dist/ served by the gate Worker
 pnpm typecheck   # zfb check passes
 ```
 
+Also run `pnpm test` (the Worker gate tests) — they must all still pass, unchanged.
+
 `pnpm build` only produces the static `dist/` assets — it does not exercise the
-gate Worker. Verify the gate with `pnpm build` then `pnpm exec wrangler dev --local`
-and the curl checks in the README. Since the Worker is independent of zfb, a zfb
-bump should not change its behavior.
+gate Worker, and neither does `pnpm preview` (zfb's static preview). Verify the
+gate against the **built** assets:
+
+```bash
+PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+pnpm exec wrangler dev --local --port "$PORT" --ip 127.0.0.1   # separate terminal
+SMOKE_URL="http://127.0.0.1:$PORT" pnpm smoke                 # must print "Static asset under test: /assets/styles-*.css"
+```
+
+plus the README's curl checks (wrong password → no `Set-Cookie`; valid password →
+marker cookie and 200s with `Cache-Control: private, no-store` / `Vary: Cookie`;
+unsafe `next` → `/`). Always use an explicit free port — other sessions may hold
+8787 — and never point `pnpm smoke` at the live host by hand (CI owns that).
+
+### Major-version verification (e.g. the 2.x → 3.0.0 migration)
+
+A green build is not proof for a major bump. Additionally:
+
+- **Baseline in a separate worktree** at the pre-bump commit (`git worktree add
+  <scratch>/old <sha> --detach`), install + build there, and keep its `dist/`.
+- **Diagnose with `pnpm typecheck` first** — `zfb check` names the file and
+  suggests HTML spellings (`charset`, `datetime`); `zfb build` render errors
+  do not.
+- **Parsed-DOM diff** of old vs new `dist/*.html` (ignore serialization-only
+  differences such as dropped `/>`).
+- **Visual + computed-style diff**: serve both builds side by side with
+  `zfb preview --port <free> --host 127.0.0.1` and compare full-page
+  screenshots plus every element's computed style at 375/710/730/1280 px
+  (±10 px around the `max-width: 720px` breakpoint), in Chromium and WebKit.
+  Reset changes only show up in the computed-style diff.
+- **Fresh frozen install** in a clean `git worktree` at the final HEAD.
+- `pnpm why preact` / `pnpm why preact-render-to-string` stay empty.
 
 ## Step 6 — Report
 
