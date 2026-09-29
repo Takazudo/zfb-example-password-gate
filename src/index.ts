@@ -219,8 +219,8 @@ function renderLoginPage(next: string, invalid: boolean): string {
 <title>Preview password</title>
 <style>
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20242a;background:#f6f7f8;color-scheme:light}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
-main{width:min(100%,390px);background:#fff;border:1px solid #d9dee3;border-radius:8px;padding:28px;box-shadow:0 18px 45px rgba(30,39,50,.08)}
+body{box-sizing:border-box;margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
+main{box-sizing:border-box;width:min(100%,448px);background:#fff;border:1px solid #d9dee3;border-radius:8px;padding:28px;box-shadow:0 18px 45px rgba(30,39,50,.08)}
 p{color:#5d6470;line-height:1.55;margin:0 0 20px}
 h1{font-size:1.45rem;line-height:1.2;margin:0 0 10px;color:#181b20}
 label{display:block;font-size:.84rem;font-weight:650;margin-bottom:8px;color:#303741}
