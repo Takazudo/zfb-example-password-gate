@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { Child } from "@takazudo/zfb/zudo-react";
 
 import "../styles/global.css";
 
@@ -7,7 +7,7 @@ type NavKey = "overview" | "updates" | "checklist";
 type Props = {
   title: string;
   active: NavKey;
-  children: ComponentChildren;
+  children: Child;
 };
 
 const navItems: Array<{ key: NavKey; label: string; href: string }> = [
@@ -20,7 +20,7 @@ export default function DefaultLayout({ title, active, children }: Props) {
   return (
     <html lang="en">
       <head>
-        <meta charSet="utf-8" />
+        <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="robots" content="noindex" />
         <title>{title}</title>

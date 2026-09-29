@@ -1,9 +1,9 @@
 {
-  "framework": "preact",
   "output": "static",
   "outDir": "dist",
   "publicDir": "public",
-  "tailwind": {
-    "enabled": true
+  "wind": {
+    "spec": 1,
+    "reset": "owned-v1"
   }
 }

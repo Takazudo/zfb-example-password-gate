@@ -30,7 +30,7 @@ export default function UpdatesPage() {
       <section class="timeline" aria-label="Preview updates">
         {updates.map((update) => (
           <article class="timeline-item" key={update.title}>
-            <time dateTime={update.date}>{update.date}</time>
+            <time datetime={update.date}>{update.date}</time>
             <div>
               <h2>{update.title}</h2>
               <p>{update.body}</p>
