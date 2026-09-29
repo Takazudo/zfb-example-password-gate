@@ -20,6 +20,8 @@
     sans-serif;
   color: var(--ink);
   background: var(--bg);
+  /* Kept from the 2.x Tailwind preflight; zudo-wind's owned-v1 reset does not set it. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
