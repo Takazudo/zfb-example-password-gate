@@ -11,6 +11,14 @@ Styling is plain authored CSS in `styles/global.css`, on top of the zudo-wind
 `owned-v1` reset (`"wind": { "spec": 1, "reset": "owned-v1" }` in
 `zfb.config.json`); no utility classes are used.
 
+## Try the public demo
+
+Open [the password-gate demo](https://zfb-example-password-gate.takazudomodular.com/)
+and enter **`demopassword`**.
+
+This password is intentionally public so anyone can try the demo. It is bound
+as the deployed Worker's `SITE_PASSWORD`.
+
 ## Local run
 
 ```sh
