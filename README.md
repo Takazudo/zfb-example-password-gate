@@ -49,8 +49,8 @@ the Worker can ask for the preview password.**
 
 For local Wrangler checks, the Worker uses the hardcoded development fallback
 password `preview-open-sesame` when `SITE_PASSWORD` is absent. That fallback is
-**localhost-only** — it is honoured only when the request hostname is
-`localhost`, `127.0.0.1`, or `[::1]`. On any other hostname an absent (or blank)
+**HTTP loopback-only** — it is honoured only over plain HTTP when the hostname
+is `localhost`, `127.0.0.1`, or `[::1]`. On any other origin an absent (or blank)
 `SITE_PASSWORD` makes the gate refuse *every* login and log the reason, rather
 than fall back to a password that is published in this repository. You can also
 add a local `.dev.vars` file with `SITE_PASSWORD=...`; do not commit that file.

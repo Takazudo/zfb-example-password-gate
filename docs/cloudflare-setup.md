@@ -86,24 +86,24 @@ Wrangler needs to be authenticated for this — either run `wrangler login`, or
 export the same token from step 1 as `CLOUDFLARE_API_TOKEN` in your shell.
 
 **Why you need it.** `src/index.ts` falls back to a hardcoded development
-password, but only on a local hostname:
+password, but only over plain HTTP on `localhost`, `127.0.0.1`, or `[::1]`:
 
 ```ts
 const DEV_PASSWORD = "preview-open-sesame";
 // …
-export function resolveExpectedPassword(env: RuntimeEnv, hostname: string): string | null {
+export function resolveExpectedPassword(env: RuntimeEnv, url: URL): string | null {
   const fromSecret = typeof env.SITE_PASSWORD === "string" ? env.SITE_PASSWORD : "";
   if (fromSecret.trim() !== "") return fromSecret;
 
-  return isLocalHost(hostname) ? DEV_PASSWORD : null;
+  return isLocalDevOrigin(url) ? DEV_PASSWORD : null;
 }
 ```
 
 That fallback exists so `wrangler dev --local` and the README's manual checks
 work without any Cloudflare state. `preview-open-sesame` is the published
 default of a public example repo, so anyone who has read this repository knows
-it — which is why it can never authenticate against a deployed host. On any
-non-local hostname an absent, deleted, mistyped, or blank `SITE_PASSWORD`
+it — which is why it can never authenticate against a deployed host. On HTTPS (including HTTPS loopback) or any
+non-loopback hostname, an absent, deleted, mistyped, or blank `SITE_PASSWORD`
 returns `null` and the gate refuses **every** login, logging
 `SITE_PASSWORD is not set for <host>` for `wrangler tail` (issue #18).
 
