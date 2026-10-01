@@ -55,10 +55,11 @@ password `preview-open-sesame` when `SITE_PASSWORD` is absent. That fallback is
 than fall back to a password that is published in this repository. You can also
 add a local `.dev.vars` file with `SITE_PASSWORD=...`; do not commit that file.
 
-If a deployed gate rejects a password you know is right, that is the signal: the
-secret is not bound to the Worker. `wrangler secret list` returns `[]`, and
-`wrangler tail` shows `SITE_PASSWORD is not set for <host>`. Setting the secret
-fixes it immediately — no redeploy needed.
+If every deployed login is rejected, check that `wrangler secret list` includes
+`SITE_PASSWORD`. A missing binding makes `wrangler tail` report
+`SITE_PASSWORD is not set for <host>`. Set the Worker secret and retry; no
+redeploy is needed. A bound secret can still reject an incorrect password, so
+an HTTP 401 by itself is not evidence that the binding is missing.
 
 The same applies to `wrangler dev --remote`, and to local dev reached over
 anything but plain http on a loopback name — an https dev server, or

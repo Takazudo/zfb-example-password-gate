@@ -1,9 +1,14 @@
 # Cloudflare setup — from zero to deployed
 
-This repo is **not deployed yet**. It has no Cloudflare secrets set, and the
-`deploy` job in `.github/workflows/deploy.yml` self-skips until they exist — so
-CI is green today, but nothing is published. This document is the ordered path
-from that state to a live Worker.
+This repo is deployed at
+https://zfb-example-password-gate.takazudomodular.com/. This guide covers setup
+for a fresh deployment and the required password binding for the existing
+Worker. The deploy job self-skips on a fresh repo without Cloudflare credentials;
+this repository already has successful production deploy and live gate checks.
+
+A deployed gate still needs its separate `SITE_PASSWORD` Worker secret to
+accept logins (step 3). An unauthenticated 401 response is expected and does not
+prove that this secret has been configured.
 
 The deploy target is **Cloudflare Workers with static assets**: `zfb build`
 emits static files into `dist/`, and the hand-written Worker in `src/index.ts`
