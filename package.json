@@ -12,8 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@takazudo/zfb": "4.6.0",
-    "@takazudo/zfb-runtime": "4.6.0"
+    "@takazudo/zfb": "4.7.0",
+    "@takazudo/zfb-runtime": "4.7.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260424.1",
