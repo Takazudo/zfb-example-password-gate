@@ -46,10 +46,12 @@ TARGET=${1:-$(npm view @takazudo/zfb dist-tags.latest)}
   from `next` would pin a prerelease of an already-released version.
 - If `CURRENT` == `TARGET`: report "already at the latest stable (<version>)" and STOP.
 - If an explicit target is older than `CURRENT`, that is a downgrade — stop and
-  confirm first. This project is on the zfb **6.x** line. The zudo-react +
+  confirm first. This project is on the zfb **7.x** line. The zudo-react +
   zudo-wind floor is still 3.0.0; a target below 3.0.0 is always a downgrade.
   zfb 5.0.0 and newer require Node.js 24 (`engines.node` `>=24.0.0`).
-- If the MAJOR version changes (e.g. 6.x → 7.0.0), treat it as a **migration**,
+  zfb 7.0.0 has no `guides/migrating-to-v7` doc; its breaking change was a
+  temporary Linux arm64 npm CLI/CSS suspension, restored in 7.1.0.
+- If the MAJOR version changes (e.g. 7.x → 8.0.0), treat it as a **migration**,
   not a two-line bump: read the upstream `guides/migrating-to-v<N>` doc, and run
   the full "Major-version verification" in Step 5.
 
